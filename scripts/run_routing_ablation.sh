@@ -9,14 +9,16 @@ MEMORY_BANK_SIZE=196
 
 python cli/run.py \
   --data_root "${DATA_ROOT}" \
-  --save_root ./results/gs_an_continual_score_k196 \
+  --save_root ./results/gcr_continual_score_k196_seed0 \
   --continual \
   --memory_bank_size ${MEMORY_BANK_SIZE} \
-  --routing_rule score
+  --routing_rule score \
+  --seed 0
 
 python cli/run.py \
   --data_root "${DATA_ROOT}" \
-  --save_root ./results/gs_an_continual_geom_k196 \
+  --save_root ./results/gcr_continual_geometry_k196_seed0 \
   --continual \
   --memory_bank_size ${MEMORY_BANK_SIZE} \
-  --routing_rule geometry
+  --routing_rule geometry \
+  --seed 0

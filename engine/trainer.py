@@ -42,6 +42,7 @@ def run_continual_routed(
     seen_banks: Dict[int, torch.Tensor] = {}
     stage2_logprec_by_ci: Dict[int, torch.Tensor] = {}
     per_task_cat_auc: List[Dict[int, float]] = []
+    per_task_cat_p_ap: List[Dict[int, float]] = []
 
     stage2_enabled = bool(cfg.get("stage2_ema", False))
     max_batches: Optional[int] = None
@@ -127,6 +128,7 @@ def run_continual_routed(
         per_cat_auc = dict(metrics.get("per_category_i_auroc", {}) or {})
         per_cat_p_ap = dict(metrics.get("per_category_p_ap", {}) or {})
         per_task_cat_auc.append({int(ci): float(per_cat_auc.get(int(ci), float("nan"))) for ci in candidate_cat_ids})
+        per_task_cat_p_ap.append({int(ci): float(per_cat_p_ap.get(int(ci), float("nan"))) for ci in candidate_cat_ids})
         per_cat_normals = dict(metrics.get("per_category_normal_scores", {}) or {})
         rows = []
         for ci in candidate_cat_ids:
@@ -158,38 +160,76 @@ def run_continual_routed(
 
     t_total = len(cat_order)
     if t_total > 1:
-        fm_per_cat: Dict[int, float] = {}
-        final_task_idx = t_total - 1
-        final_task = per_task_cat_auc[final_task_idx] if final_task_idx < len(per_task_cat_auc) else {}
-        for idx in range(0, t_total - 1):
-            cat = str(cat_order[idx])
-            if cat not in cat_to_id:
-                continue
-            ci = int(cat_to_id[cat])
-            prev_vals = []
-            for t in range(idx, t_total - 1):
-                if t < len(per_task_cat_auc):
-                    val = per_task_cat_auc[t].get(ci, float("nan"))
+        def compute_forgetting(history: List[Dict[int, float]]) -> Dict[int, float]:
+            """Compute standard continual forgetting over pre-final categories."""
+            out: Dict[int, float] = {}
+            final_task = history[-1] if history else {}
+            # The last introduced category has no later task on which forgetting
+            # can be observed, so the conventional average uses the first T-1
+            # categories.
+            for intro_idx in range(t_total - 1):
+                cat_name = str(cat_order[intro_idx])
+                if cat_name not in cat_to_id:
+                    continue
+                ci = int(cat_to_id[cat_name])
+                vals: List[float] = []
+                for task_idx in range(intro_idx, t_total):
+                    if task_idx >= len(history):
+                        continue
+                    val = float(history[task_idx].get(ci, float("nan")))
                     if val == val:
-                        prev_vals.append(float(val))
-            final_val = float(final_task.get(ci, float("nan")))
-            if not prev_vals or final_val != final_val:
-                fm_per_cat[ci] = float("nan")
-            else:
-                fm_per_cat[ci] = float(max(prev_vals) - final_val)
-        fm_vals = [v for v in fm_per_cat.values() if v == v]
-        fm_overall = float(sum(fm_vals) / len(fm_vals)) if fm_vals else float("nan")
+                        vals.append(val)
+                final_val = float(final_task.get(ci, float("nan")))
+                if not vals or final_val != final_val:
+                    out[ci] = float("nan")
+                else:
+                    out[ci] = float(max(vals) - final_val)
+            return out
 
+        i_fm_per_cat = compute_forgetting(per_task_cat_auc)
+        p_fm_per_cat = compute_forgetting(per_task_cat_p_ap)
+
+        i_vals = [v for v in i_fm_per_cat.values() if v == v]
+        p_vals = [v for v in p_fm_per_cat.values() if v == v]
+        i_fm = float(sum(i_vals) / len(i_vals)) if i_vals else float("nan")
+        p_fm = float(sum(p_vals) / len(p_vals)) if p_vals else float("nan")
+
+        summary_ts = int(time.time())
         append_csv(
             [
                 {
-                    "timestamp_unix": int(time.time()),
+                    "timestamp_unix": summary_ts,
                     "run_type": "continual_routed_forgetting",
                     "n_tasks": int(t_total),
                     "stage2_ema": bool(stage2_enabled),
                     "routing_rule": str(cfg.get("routing_rule", "geometry")),
-                    "forgetting": float(fm_overall),
+                    "i_fm": float(i_fm),
+                    "p_fm": float(p_fm),
+                    # Backward-compatible alias used by earlier result files.
+                    "forgetting": float(i_fm),
                 }
             ],
             results_csv,
         )
+
+        fm_rows = []
+        for intro_idx in range(t_total - 1):
+            cat_name = str(cat_order[intro_idx])
+            if cat_name not in cat_to_id:
+                continue
+            ci = int(cat_to_id[cat_name])
+            fm_rows.append(
+                {
+                    "timestamp_unix": summary_ts,
+                    "run_type": "continual_routed_forgetting",
+                    "task_introduced": int(intro_idx + 1),
+                    "category": cat_name,
+                    "category_id": ci,
+                    "stage2_ema": bool(stage2_enabled),
+                    "routing_rule": str(cfg.get("routing_rule", "geometry")),
+                    "i_fm": float(i_fm_per_cat.get(ci, float("nan"))),
+                    "p_fm": float(p_fm_per_cat.get(ci, float("nan"))),
+                }
+            )
+        if fm_rows:
+            append_csv(fm_rows, per_cat_csv)

@@ -32,7 +32,7 @@ BACKBONE = "ViT-B-16"
 PRETRAINED = "laion400m_e32"
 LAYER_INDICES = [6]
 INPUT_SIZE = 224
-MEMORY_BANK_SIZE = 96
+MEMORY_BANK_SIZE = 196
 CHUNK_SIZE = 64
 LOGPREC_MIN = -6.0
 LOGPREC_MAX = 6.0
@@ -84,7 +84,7 @@ def run_single(cfg: Dict[str, Any]) -> None:
     t_start = time.time()
     set_seed(int(cfg["seed"]))
     set_tf32()
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
 
     os.makedirs(cfg["save_root"], exist_ok=True)
     _resolve_data_root_inplace(cfg)
@@ -211,7 +211,7 @@ def parse_args() -> Dict[str, Any]:
 
     p.add_argument("--memory_bank_size", type=int, default=None)
 
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--seed", type=int, default=0)
     p.add_argument("--stage2_ema", action="store_true")
     p.add_argument(
         "--routing_rule",
@@ -269,7 +269,7 @@ def main() -> None:
     if bool(cfg.get("continual", False)) or cfg.get("cat_order"):
         set_seed(int(cfg["seed"]))
         set_tf32()
-        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.benchmark = False
         cats = _prepare_categories(cfg)
         cat_order = cfg.get("cat_order") or cats
         run_continual_routed(
